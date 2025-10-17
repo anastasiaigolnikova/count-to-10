@@ -1,0 +1,520 @@
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Paint Me — mini game</title>
+    <style>
+      html,body,#root{height:100%;margin:0;padding:0;background:#0b1020}
+      .hud{position:absolute;left:12px;right:12px;bottom:12px;display:flex;gap:12px;align-items:center;pointer-events:none}
+      .bar{flex:1;height:8px;border-radius:9999px;background:rgba(255,255,255,.35);backdrop-filter:saturate(1.3) blur(6px);overflow:hidden}
+      .fill{height:8px;border-radius:9999px;background:white;transition:width .15s ease}
+      .hint{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+      .hint > div{padding:.5rem 1rem;border-radius:12px;background:rgba(0,0,0,.35);color:white;font:500 14px system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial}
+      canvas{touch-action:none;cursor:crosshair}
+    </style>
+    <!-- React 18 UMD -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for in-browser JSX transform -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const {useRef, useLayoutEffect, useEffect, useState} = React;
+
+      const DEFAULT_TOP = "#126bff";
+      const DEFAULT_MID = "#98fff7";
+      const DEFAULT_BOT = "#f2413d";
+      const SAFE_COLOR = "#000000";
+
+      const clamp01 = (v) => {
+        const n = Number(v);
+        if (!isFinite(n)) return 0;
+        return Math.min(1, Math.max(0, n));
+      };
+
+      const isValidCssColor = (color) => {
+        if (typeof color !== "string" || color.trim() === "") return false;
+        const s = new Option().style;
+        s.color = "";
+        s.color = color;
+        return s.color !== "";
+      };
+
+      const safeColor = (color, fallback) => (isValidCssColor(color) ? String(color) : fallback);
+
+      const safeAddStop = (g, offset, color, fallback=SAFE_COLOR) => {
+        const off = clamp01(offset);
+        const col = safeColor(color, fallback);
+        try { g.addColorStop(off, col); }
+        catch(e) { try { g.addColorStop(off, fallback); } catch(_){} }
+      };
+
+      function dpr(){ return Math.max(1, Math.floor(window.devicePixelRatio || 1)); }
+      function get2D(c){ return c ? c.getContext("2d") : null; }
+
+      // polyfill roundRect if missing
+      if (CanvasRenderingContext2D && !CanvasRenderingContext2D.prototype.roundRect) {
+        CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r){
+          r = Math.min(r || 0, Math.abs(w/2), Math.abs(h/2));
+          this.beginPath();
+          this.moveTo(x+r, y);
+          this.arcTo(x+w, y, x+w, y+h, r);
+          this.arcTo(x+w, y+h, x, y+h, r);
+          this.arcTo(x, y+h, x, y, r);
+          this.arcTo(x, y, x+w, y, r);
+          this.closePath();
+        };
+      }
+
+      function GradientCanvas({
+        width=1080, height=1920,
+        topColor=DEFAULT_TOP, middleColor=DEFAULT_MID, bottomColor=DEFAULT_BOT,
+        middlePosition=0.5, useMiddleColor=false, addGrain=false, onLevelComplete
+      }){
+        const wrapperRef = useRef(null);
+        const drawRef = useRef(null);
+        const maskRef = useRef(null);
+        const rafRef = useRef(0);
+        const readyRef = useRef(false);
+        const [filled, setFilled] = useState(0);
+        const [state, setState] = useState("idle");
+
+        // game params
+        const BRUSH_RADIUS = 26;
+        const STAR_TIME = 1400;
+        const BURN_TIME = 2200;
+        const FIREWORK_BURSTS = 8;
+        const SMOKE_SPAWN = 0.8;
+        const SMOKE_CAP = 360;
+        const THRESHOLD = 0.9;
+        const FIRE_INTENSITY = 1.4;
+        const FLAME_GAIN = 1.25;
+        const SEED_COLS = 12;
+        const SEED_ROWS = 20;
+        const SPARK_SPAWN = 0.9;
+        const SPARK_CAP = 600;
+
+        // brushes
+        const palette = [
+          safeColor(topColor, DEFAULT_TOP),
+          safeColor(middleColor, DEFAULT_MID),
+          safeColor(bottomColor, DEFAULT_BOT),
+          "#00d18f","#ff5db1","#8a5cff","#f9c74f",
+        ];
+        const pick = () => palette[Math.floor(Math.random()*palette.length)];
+
+        const makeLinear = (ctx, x0,y0,x1,y1)=>{
+          const g = ctx.createLinearGradient(x0,y0,x1,y1);
+          safeAddStop(g,0,pick(),DEFAULT_TOP);
+          if (useMiddleColor) safeAddStop(g,0.5,middleColor,DEFAULT_MID);
+          safeAddStop(g,1,pick(),DEFAULT_BOT);
+          return g;
+        };
+        const makeRadial = (ctx,x,y,r)=>{
+          const g = ctx.createRadialGradient(x,y,0,x,y,r);
+          safeAddStop(g,0,"rgba(255,255,255,0.85)");
+          safeAddStop(g,0.6,pick());
+          safeAddStop(g,1,pick());
+          return g;
+        };
+
+        const stampPinwheel = (ctx,x,y)=>{
+          const blades = 6 + ((Math.random()*4)|0);
+          const r = 60 + Math.random()*90;
+          ctx.save(); ctx.translate(x,y); ctx.rotate(Math.random()*Math.PI);
+          for(let i=0;i<blades;i++){
+            const a0 = (i/blades)*Math.PI*2;
+            ctx.beginPath();
+            ctx.moveTo(0,0);
+            ctx.quadraticCurveTo(r*0.2,r*0.2, Math.cos(a0)*r, Math.sin(a0)*r);
+            ctx.quadraticCurveTo(r*0.2,r*0.2, 0,0);
+            ctx.closePath();
+            ctx.fillStyle = makeLinear(ctx,0,0, Math.cos(a0)*r, Math.sin(a0)*r);
+            ctx.globalCompositeOperation = "lighter";
+            ctx.fill();
+          }
+          ctx.restore();
+          return r*0.8;
+        };
+
+        const stampBlob = (ctx,x,y)=>{
+          const r = 40 + Math.random()*80;
+          ctx.save();
+          ctx.filter = "blur(0.5px)";
+          ctx.fillStyle = makeRadial(ctx,x,y,r);
+          ctx.globalCompositeOperation = "lighter";
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+          ctx.restore();
+          return r;
+        };
+
+        const stampSpiral = (ctx,x,y)=>{
+          const petals = 10;
+          const baseR = 20 + Math.random()*20;
+          let lastR = baseR;
+          ctx.save(); ctx.translate(x,y);
+          for(let i=0;i<petals;i++){
+            const a = i*0.55;
+            const r = baseR + i*6;
+            ctx.beginPath();
+            ctx.ellipse(Math.cos(a)*r, Math.sin(a)*r, r*0.9, r*0.3, a, 0, Math.PI*2);
+            ctx.fillStyle = makeLinear(ctx,0,0, Math.cos(a)*r, Math.sin(a)*r);
+            ctx.globalAlpha = 0.9;
+            ctx.fill();
+            lastR = r;
+          }
+          ctx.restore();
+          return lastR;
+        };
+
+        const stampSquares = (ctx,x,y)=>{
+          const size = 10 + Math.random()*18;
+          const grid = 3 + ((Math.random()*3)|0);
+          ctx.save();
+          ctx.translate(x-(grid*size)/2, y-(grid*size)/2);
+          for(let i=0;i<grid;i++){
+            for(let j=0;j<grid;j++){
+              if (Math.random()<0.7){
+                ctx.fillStyle = pick();
+                ctx.fillRect(i*size, j*size, size*0.9, size*0.9);
+              }
+            }
+          }
+          ctx.restore();
+          return grid*size*0.6;
+        };
+
+        const stampRibbon = (ctx,x,y)=>{
+          const w = 140 + Math.random()*120;
+          const h = 18 + Math.random()*22;
+          const angle = (Math.random()-0.5)*Math.PI;
+          ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+          ctx.fillStyle = makeLinear(ctx, -w/2,-h/2, w/2,h/2);
+          ctx.fillRect(-w/2,-h/2,w,h);
+          ctx.globalAlpha = 0.35;
+          ctx.fillStyle = "#000";
+          ctx.fillRect(-w/2,-h/2,w,2);
+          ctx.fillRect(-w/2,h/2-2,w,2);
+          ctx.restore();
+          return Math.max(w,h)*0.5;
+        };
+
+        const stampKeepCalm = (ctx,x,y)=>{
+          const size = 28 + Math.random()*42;
+          ctx.save(); ctx.translate(x,y); ctx.rotate((Math.random()-0.5)*0.6);
+          ctx.textAlign="center"; ctx.textBaseline="middle";
+          ctx.font = `900 ${Math.round(size)}px system-ui,-apple-system,Segoe UI,Roboto,Arial`;
+          ctx.save(); ctx.globalAlpha=0.35; ctx.strokeStyle="#000"; ctx.lineWidth=Math.max(2, Math.round(size*0.08)); ctx.strokeText("KEEP CALM",0,0); ctx.restore();
+          const g = makeLinear(ctx, -size*2, 0, size*2, 0);
+          ctx.fillStyle = g;
+          ctx.globalCompositeOperation="lighter";
+          ctx.fillText("KEEP CALM",0,0);
+          ctx.restore();
+          return size*3.2;
+        };
+
+        const stampCrazyFace = (ctx,x,y)=>{
+          const scale = 0.6 + Math.random()*0.9;
+          const r = 90*scale;
+          ctx.save(); ctx.translate(x,y); ctx.rotate((Math.random()-0.5)*0.5);
+          ctx.fillStyle = pick();
+          ctx.beginPath(); ctx.ellipse(0,0,r*1.1,r*0.9,0,0,Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#ffd75e"; ctx.beginPath(); ctx.ellipse(0,-r*0.05,r*0.45,r*0.32,0,0,Math.PI*2); ctx.fill();
+          const eye=(ex,ey)=>{ ctx.fillStyle="#fff"; ctx.beginPath(); ctx.ellipse(ex,ey,r*0.22,r*0.22,0,0,Math.PI*2); ctx.fill(); ctx.fillStyle="#111"; ctx.beginPath(); ctx.arc(ex + r*(Math.random()*0.08), ey + r*(Math.random()*0.08), r*0.09, 0, Math.PI*2); ctx.fill(); };
+          eye(-r*0.35,-r*0.15); eye(r*0.35,-r*0.15);
+          ctx.fillStyle="#fff"; ctx.beginPath(); ctx.roundRect(-r*0.7, r*0.2, r*1.4, r*0.45, r*0.2); ctx.fill();
+          ctx.fillStyle="#111"; for(let i=-5;i<=5;i++){ const tx=(i/5)*r*0.6; ctx.fillRect(tx-2, r*0.2, 4, r*0.45); }
+          ctx.fillStyle=pick(); ctx.beginPath(); ctx.roundRect(-r*0.7, r*0.75, r*0.35, r*0.18, 10); ctx.roundRect(r*0.35, r*0.75, r*0.35, r*0.18, 10); ctx.fill();
+          ctx.restore();
+          return r*1.2;
+        };
+
+        const stampPaperScrap = (ctx,x,y)=>{
+          const w = 160 + Math.random()*220;
+          const h = 120 + Math.random()*180;
+          const angle = (Math.random()-0.5)*0.7;
+          ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+          const jag = 10 + ((Math.random()*10)|0);
+          const path = [];
+          for(let i=0;i<jag;i++){ const px = -w/2 + (w*i)/(jag-1) + (Math.random()-0.5)*8; const py = -h/2 + (Math.random()-0.5)*12; path.push([px,py]); }
+          path.push([w/2,h/2]); path.push([-w/2,h/2]);
+          ctx.save(); ctx.shadowColor="rgba(0,0,0,0.22)"; ctx.shadowBlur=12; ctx.shadowOffsetY=6;
+          ctx.beginPath(); ctx.moveTo(path[0][0], path[0][1]); for(let i=1;i<path.length;i++) ctx.lineTo(path[i][0], path[i][1]); ctx.closePath();
+          ctx.fillStyle = makeLinear(ctx, -w/2,-h/2, w/2,h/2); ctx.fill(); ctx.restore();
+          ctx.save(); ctx.globalAlpha=0.25; for(let i=0;i<(w*h)/1200;i++){ ctx.fillStyle = Math.random()<0.5 ? "#fff" : "#000"; const nx=(Math.random()-0.5)*w; const ny=(Math.random()-0.5)*h; ctx.fillRect(nx,ny,1,1);} ctx.restore();
+          ctx.restore();
+          return Math.max(w,h)*0.45;
+        };
+
+        const BRUSHES = [ stampPinwheel, stampBlob, stampSpiral, stampSquares, stampRibbon, stampKeepCalm, stampCrazyFace, stampPaperScrap ];
+
+        function fitCanvases(){
+          const wrap = wrapperRef.current, draw = drawRef.current, mask = maskRef.current;
+          if (!wrap || !draw || !mask) return;
+          const rect = wrap.getBoundingClientRect();
+          const ddpr = dpr();
+          const targetW = Math.max(rect.width, width || rect.width);
+          const targetH = Math.max(rect.height, height || rect.height);
+          [draw, mask].forEach((c)=>{
+            c.width = Math.max(1, Math.floor(targetW*ddpr));
+            c.height = Math.max(1, Math.floor(targetH*ddpr));
+            c.style.width = targetW + "px"; c.style.height = targetH + "px";
+            const ctx = get2D(c); if (ctx) ctx.setTransform(ddpr,0,0,ddpr,0,0);
+          });
+          const ctx = get2D(draw); if (ctx) paintBackground(ctx);
+          const m = get2D(mask); if (m) { m.globalCompositeOperation="source-over"; m.clearRect(0,0,mask.width,mask.height); }
+          setFilled(0); setState("idle"); readyRef.current = true;
+        }
+
+        useLayoutEffect(()=>{
+          const init = ()=>{
+            fitCanvases();
+            const ro = window.ResizeObserver ? new ResizeObserver(()=>fitCanvases()) : null;
+            if (ro && wrapperRef.current) ro.observe(wrapperRef.current);
+            const onOrient = ()=>fitCanvases();
+            window.addEventListener("orientationchange", onOrient);
+            return ()=>{ ro && ro.disconnect(); window.removeEventListener("orientationchange", onOrient); cancelAnimationFrame(rafRef.current); };
+          };
+          let cleanup;
+          const id = requestAnimationFrame(()=>{ cleanup = init(); });
+          return ()=>{ cancelAnimationFrame(id); cleanup && cleanup(); };
+        }, []);
+
+        const isDrawingRef = useRef(false);
+        const lastPtRef = useRef({x:0,y:0});
+        const lastCheckRef = useRef(0);
+
+        const pointerPos = (e)=>{
+          const draw = drawRef.current; if (!draw) return lastPtRef.current;
+          const rect = draw.getBoundingClientRect();
+          return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        };
+
+        const handlePointerDown = (e)=>{
+          if (!readyRef.current) return;
+          e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
+          e.preventDefault();
+          isDrawingRef.current = true; setState("painting");
+          const p = pointerPos(e); lastPtRef.current = p; stampBrush(p.x, p.y);
+        };
+        const handlePointerMove = (e)=>{
+          if (!readyRef.current || !isDrawingRef.current) return;
+          e.preventDefault();
+          const p = pointerPos(e);
+          const dx = p.x - lastPtRef.current.x, dy = p.y - lastPtRef.current.y;
+          const dist = Math.hypot(dx,dy), step = BRUSH_RADIUS*0.6;
+          if (dist >= step){
+            const steps = Math.floor(dist/step);
+            for(let i=1;i<=steps;i++){ const x = lastPtRef.current.x + (dx*i)/steps; const y = lastPtRef.current.y + (dy*i)/steps; stampBrush(x,y); }
+            lastPtRef.current = p;
+          }
+          const now = performance.now();
+          if (now - lastCheckRef.current > 250){
+            lastCheckRef.current = now;
+            const ratio = measureFill(); setFilled(ratio);
+            if (ratio >= THRESHOLD && state !== "celebrate") startCelebrate();
+          }
+        };
+        const handlePointerUp = ()=>{ isDrawingRef.current = false; };
+
+        function stampBrush(x,y){
+          const ctx = get2D(drawRef.current); const m = get2D(maskRef.current);
+          if (!ctx || !m) return;
+          const brush = BRUSHES[(Math.random()*BRUSHES.length)|0];
+          const radius = brush(ctx,x,y) || BRUSH_RADIUS;
+          m.save(); m.globalCompositeOperation="source-over"; m.fillStyle="#fff";
+          m.beginPath(); m.arc(x,y, Math.max(BRUSH_RADIUS, radius*0.6), 0, Math.PI*2); m.fill(); m.restore();
+        }
+
+        function measureFill(){
+          const mEl = maskRef.current, ctx = get2D(mEl);
+          if (!mEl || !ctx || mEl.width===0 || mEl.height===0) return 0;
+          let img; try { img = ctx.getImageData(0,0,mEl.width, mEl.height); } catch(e){ return 0; }
+          const data = img.data; let covered=0,total=0;
+          for(let i=0;i<data.length;i+=12){ const a = data[i+3]; covered += a>0 ? 1 : 0; total += 1; }
+          return total ? covered/total : 0;
+        }
+
+        function resetLevel(){
+          const ctx = get2D(drawRef.current); const m = get2D(maskRef.current); const mask = maskRef.current;
+          if (!ctx || !m || !mask) return;
+          paintBackground(ctx); m.clearRect(0,0,mask.width,mask.height); setFilled(0); setState("idle");
+        }
+
+        function paintBackground(ctx){
+          const c = ctx.canvas; ctx.clearRect(0,0,c.width,c.height);
+          const w = c.width/dpr(), h = c.height/dpr();
+          const g = ctx.createLinearGradient(0,0,w,0);
+          safeAddStop(g,0,topColor,DEFAULT_TOP);
+          if (useMiddleColor) safeAddStop(g, middlePosition, middleColor, DEFAULT_MID);
+          safeAddStop(g,1,bottomColor,DEFAULT_BOT);
+          ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+          if (addGrain){ const density = Math.floor((w*h)/6000); ctx.save(); ctx.globalAlpha=0.05; for(let i=0;i<density;i++){ const x=Math.random()*w, y=Math.random()*h, s=1+Math.random()*2; ctx.fillStyle="#000"; ctx.fillRect(x,y,s,s);} ctx.restore(); }
+          ctx.fillStyle="rgba(255,255,255,0.85)"; ctx.font="600 28px system-ui,-apple-system, Segoe UI, Roboto"; ctx.textAlign="center"; ctx.fillText("paint me", w/2, h/2);
+        }
+
+        function startCelebrate(){
+          setState("celebrate");
+          const ctx = get2D(drawRef.current), draw = drawRef.current;
+          if (!ctx || !draw) return;
+          const W = draw.width, H = draw.height, cssW = W/dpr(), cssH = H/dpr();
+
+          // fireworks
+          const particles = [];
+          function burst(bx,by){
+            const n = 60 + ((Math.random()*40)|0);
+            for(let i=0;i<n;i++){
+              const a = (i/n)*Math.PI*2 + Math.random()*0.3;
+              const speed = 1 + Math.random()*3.2;
+              particles.push({ x:bx, y:by, vx:Math.cos(a)*speed, vy:Math.sin(a)*speed, life:0, max:600+Math.random()*500, size:1+Math.random()*2.5, color: ["#ffed6f","#ff9b00","#ff3d57","#83fffb","#7cc6ff"][ (Math.random()*5)|0 ] });
+            }
+          }
+          for(let i=0;i<FIREWORK_BURSTS;i++) burst(Math.random()*cssW, Math.random()*cssH*0.6 + cssH*0.2);
+
+          // burn seeds
+          const seeds = [];
+          const cols = SEED_COLS, rows = SEED_ROWS;
+          for(let iy=0; iy<rows; iy++){
+            for(let ix=0; ix<cols; ix++){
+              const x = ((ix+0.5)/cols)*cssW + (Math.random()-0.5)*18;
+              const y = ((iy+0.5)/rows)*cssH + (Math.random()-0.5)*18;
+              const baseSpan = 60 + Math.random()*140;
+              seeds.push({ x, y, phase: Math.random()*Math.PI*2, span: baseSpan*FIRE_INTENSITY });
+            }
+          }
+
+          // smoke & sparks
+          const smokes = [];
+          const sparks = [];
+
+          const t0 = performance.now();
+          const tick = ()=>{
+            const now = performance.now();
+            const t = now - t0;
+            const k = Math.min(1, t / BURN_TIME);
+
+            // dim
+            ctx.save(); ctx.globalCompositeOperation="source-over"; ctx.globalAlpha=0.08; ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H); ctx.restore();
+
+            // fireworks
+            ctx.save(); ctx.globalCompositeOperation="lighter";
+            particles.forEach(p=>{
+              p.life += 16; p.x += p.vx; p.y += p.vy; p.vy += 0.02;
+              const fade = Math.max(0, 1 - p.life/p.max); if (!fade) return;
+              const r = p.size*(1+(1-fade)*2);
+              const g = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,r);
+              safeAddStop(g,0,p.color); safeAddStop(g,1,"rgba(0,0,0,0)");
+              ctx.fillStyle=g; ctx.globalAlpha=0.9*fade; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill();
+            }); ctx.restore();
+
+            // spawn smoke + sparks
+            if (smokes.length < SMOKE_CAP || sparks.length < SPARK_CAP){
+              seeds.forEach(s=>{
+                if (Math.random() < SMOKE_SPAWN && smokes.length < SMOKE_CAP){
+                  smokes.push({ x: s.x + (Math.random()-0.5)*18, y: s.y + (Math.random()-0.5)*18, r: 8 + Math.random()*14, vx:(Math.random()-0.5)*0.5, vy: -0.35 - Math.random()*0.7, life:0, max:900 + Math.random()*900 });
+                }
+                if (Math.random() < SPARK_SPAWN && sparks.length < SPARK_CAP){
+                  const a = Math.random()*Math.PI*2; const sp = 1.5 + Math.random()*3.5;
+                  sparks.push({ x:s.x, y:s.y, vx:Math.cos(a)*sp*0.8, vy:Math.sin(a)*sp*0.2 - (0.8 + Math.random()*1.6), life:0, max:500 + Math.random()*600, size: 1 + Math.random()*1.8 });
+                }
+              });
+            }
+
+            // smoke
+            ctx.save(); ctx.globalCompositeOperation="source-over";
+            smokes.forEach(s=>{
+              s.life += 16; s.x += s.vx; s.y += s.vy; s.vx *= 0.99; s.vy -= 0.0006; s.r *= 1.014;
+              const fade = Math.max(0, 1 - s.life/s.max); if (!fade) return;
+              const g = ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,s.r);
+              safeAddStop(g,0,`rgba(255,255,255,${(0.30*fade).toFixed(3)})`);
+              safeAddStop(g,0.55,`rgba(170,180,200,${(0.22*fade).toFixed(3)})`);
+              safeAddStop(g,1,"rgba(0,0,0,0)");
+              ctx.fillStyle=g; ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill();
+            }); ctx.restore();
+
+            // sparks
+            ctx.save(); ctx.globalCompositeOperation="lighter";
+            sparks.forEach(sp=>{
+              sp.life += 16; sp.x += sp.vx; sp.y += sp.vy; sp.vx *= 0.995; sp.vy += 0.01;
+              const fade = Math.max(0, 1 - sp.life/sp.max); if (!fade) return;
+              const r = sp.size*(1+(1-fade)*1.5);
+              const g = ctx.createRadialGradient(sp.x,sp.y,0,sp.x,sp.y,r);
+              safeAddStop(g,0,`rgba(255,230,150,${(0.9*fade).toFixed(3)})`);
+              safeAddStop(g,0.6,`rgba(255,120,20,${(0.6*fade).toFixed(3)})`);
+              safeAddStop(g,1,"rgba(0,0,0,0)");
+              ctx.fillStyle=g; ctx.beginPath(); ctx.arc(sp.x,sp.y,r,0,Math.PI*2); ctx.fill();
+            }); ctx.restore();
+
+            // flames + burn holes
+            seeds.forEach((s,i)=>{
+              const phase = s.phase + k*7 + i*0.19;
+              const r = (k*(s.span + 220)) * (0.95 + 0.35*Math.sin(phase));
+              const flame = ctx.createRadialGradient(s.x,s.y, Math.max(0,r*0.35), s.x,s.y,r);
+              safeAddStop(flame,0,`rgba(255,255,255,${(0.65*FLAME_GAIN*(1-k)).toFixed(3)})`);
+              safeAddStop(flame,0.28,`rgba(255,220,40,${(0.70*FLAME_GAIN*(1-k)).toFixed(3)})`);
+              safeAddStop(flame,0.6,`rgba(255,120,10,${(0.55*FLAME_GAIN*(1-k)).toFixed(3)})`);
+              safeAddStop(flame,1,"rgba(0,0,0,0)");
+              ctx.save(); ctx.globalCompositeOperation="lighter"; ctx.globalAlpha=0.9*(1-k);
+              ctx.beginPath(); ctx.arc(s.x,s.y,r,0,Math.PI*2); ctx.fillStyle=flame; ctx.fill(); ctx.restore();
+
+              // charred rim
+              ctx.save(); ctx.globalCompositeOperation="source-over"; ctx.globalAlpha=0.08; ctx.strokeStyle="#000"; ctx.lineWidth=3;
+              ctx.beginPath(); ctx.arc(s.x,s.y,r*0.97,0,Math.PI*2); ctx.stroke(); ctx.restore();
+
+              // burn hole
+              ctx.save(); ctx.globalCompositeOperation="destination-out"; ctx.beginPath(); ctx.arc(s.x,s.y,r*1.02,0,Math.PI*2); ctx.fill(); ctx.restore();
+            });
+
+            if (t < Math.max(BURN_TIME, STAR_TIME)){
+              rafRef.current = requestAnimationFrame(tick);
+            } else {
+              resetLevel();
+              onLevelComplete && onLevelComplete();
+            }
+          };
+          rafRef.current = requestAnimationFrame(tick);
+        }
+
+        return (
+          <div ref={wrapperRef} style={{position:'fixed', inset:0}}>
+            <canvas
+              ref={drawRef}
+              width={width}
+              height={height}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerLeave={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              style={{width:'100%',height:'100%'}}
+            />
+            <canvas ref={maskRef} width={width} height={height} style={{position:'absolute',inset:0,opacity:0,pointerEvents:'none'}}/>
+            <div className="hud">
+              <div className="bar"><div className="fill" style={{width: Math.min(100, Math.round(filled*100)) + '%'}}></div></div>
+              <div style={{color:'#fff',font:'600 12px system-ui,-apple-system,Segoe UI,Roboto'}}>{Math.round(filled*100)}%</div>
+            </div>
+            {state==='idle' && (
+              <div className="hint"><div>води пальцем — кисти: pinwheels / blobs / spiral / squares / ribbons / KEEP CALM / crazy face / paper scraps</div></div>
+            )}
+          </div>
+        );
+      }
+
+      function App(){
+        const [ready,setReady] = useState(false);
+        useEffect(()=>{
+          const on = ()=>setReady(true);
+          if (document.readyState === 'complete') on(); else window.addEventListener('load', on, {once:true});
+        },[]);
+        return <GradientCanvas width={window.innerWidth} height={window.innerHeight} useMiddleColor={false} addGrain={true} />;
+      }
+
+      ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+    </script>
+  </body>
+</html>
