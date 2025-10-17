@@ -23,15 +23,31 @@
     const state = { drawing:false, last:{x:0,y:0}, winCount:0, phase:'idle', lastCheck:0, lastPaint:0 };
     const DPR = () => Math.max(1, Math.floor(window.devicePixelRatio || 1));
 
-    // ===== THEMES for fireworks background only (visual flavor) =====
+    // wobble layer for pink pair (rendered every frame)
+    const wobblers = []; // {x,y,R,phase,amp,start,until}
+    function drawWobblers(){
+      const now = performance.now();
+      for (let i=wobblers.length-1; i>=0; i--){
+        const w = wobblers[i];
+        if (now > w.until){ wobblers.splice(i,1); continue; }
+        const t = (now - w.start)/1000; // seconds
+        const wob = Math.sin(t*10 + w.phase) * w.amp; // [-amp..amp]
+        drawPinkPair(w.x + wob, w.y, w.R); // shift X only
+      }
+      requestAnimationFrame(drawWobblers);
+    }
+    requestAnimationFrame(drawWobblers);
+
+    // ===== THEMES =====
     const THEMES = [
-      { key:'chubrik',  fire:['#ffed6f','#7cc6ff','#ff9b00','#ff3d57','#83fffb'] },
-      { key:'flowers',  fire:['#f0abfc','#86efac','#fde047','#60a5fa','#fb7185'] },
-      { key:'paper',    fire:['#a7f3d0','#f9c74f','#7cc6ff','#8b5cf6','#fb7185'] },
-      { key:'keepcalm', fire:['#ffffff','#e5e7eb','#93c5fd','#a78bfa','#22d3ee'] },
-      { key:'skulls',   fire:['#ffffff','#e5e7eb','#9ca3af','#111827','#6b7280'] },
-      { key:'farm',     fire:['#a7f3ff','#7cc6ff','#60a5fa','#1e3a8a','#0b1020'] },
-      { key:'peaks',    fire:['#ffe4e6','#fecaca','#fda4af','#f472b6','#c084fc'] }
+      { key:'chubrik',   fire:['#ffed6f','#7cc6ff','#ff9b00','#ff3d57','#83fffb'] },
+      { key:'flowers',   fire:['#f0abfc','#86efac','#fde047','#60a5fa','#fb7185'] },
+      { key:'paper',     fire:['#a7f3d0','#f9c74f','#7cc6ff','#8b5cf6','#fb7185'] },
+      { key:'keepcalm',  fire:['#ffffff','#e5e7eb','#93c5fd','#a78bfa','#22d3ee'] },
+      { key:'skulls',    fire:['#ffffff','#e5e7eb','#9ca3af','#111827','#6b7280'] },
+      { key:'farm',      fire:['#a7f3ff','#7cc6ff','#60a5fa','#1e3a8a','#0b1020'] },
+      { key:'peaks',     fire:['#ffe4e6','#fecaca','#fda4af','#f472b6','#c084fc'] },
+      { key:'pinkstars', fire:['#ffccd5','#ff8fab','#ff597b','#ffa1c9','#ffe3e3'] }
     ];
 
     // Titles cycle
@@ -80,218 +96,287 @@
       ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
     }
 
-    // ===== base gradient builders =====
-    function gradLinear(x0,y0,x1,y1){
-      const g = ctx.createLinearGradient(x0,y0,x1,y1);
-      const cols = ['#00d18f','#ff5db1','#8a5cff','#f9c74f','#98fff7'];
-      addStop(g,0,pick(cols)); addStop(g,1,pick(cols)); return g;
-    }
-
     // ===== individual stamps (one per mission) =====
-    // 1) Чубрик + пиксели
-    function sChubrikWithPixels(x,y){
-      const s = rnd(90,140);
-      ctx.save(); ctx.translate(x,y); ctx.rotate(rnd(-0.15,0.15));
-      glossyCircle(0,0,s*0.8,'#d35443');
-      glossyCircle(0,-s*0.02,s*0.35,'#f4d06b');
-      eye(-s*0.32,-s*0.10,s*0.18); eye(s*0.32,-s*0.10,s*0.18);
-      const w=s*0.65,h=s*0.22; ctx.save(); ctx.translate(0,s*0.18);
-      ctx.fillStyle = '#fff'; roundRectPath(-w/2,-h/2,w,h,10); ctx.fill();
-      ctx.save(); ctx.clip(); ctx.fillStyle = '#111'; const bw=Math.max(2,Math.round(w/14));
-      for(let i=-Math.ceil(w/2); i<w/2; i+=bw*1.15){ ctx.fillRect(i,-h/2,bw,h); }
-      ctx.restore(); ctx.restore();
-      // маленький шлейф пикселей сбоку
-      const px = x - s*0.7 + Math.random()*s*0.2, py = y - s*0.1 + Math.random()*s*0.2;
-      const colors=['#ff8bd9','#ff63b3','#ffb4d2'];
-      for(let i=0;i<3;i++){ ctx.fillStyle = pick(colors); const sz=8+Math.random()*10; ctx.fillRect(px + i*sz*0.9, py + (i%2)*sz*0.9, sz, sz); }
+    // 1) Чубрик + пиксели (оригинальный)
+    function sChubrik(x,y){
+      const R = 80 + Math.random()*100;
+      ctx.save(); ctx.translate(x,y); ctx.rotate((Math.random()-0.5)*0.5);
+      glossyCircle(0,0,R,'#e4574f');
+      const f = R*0.52; glossyCircle(0,0,f,'#f4cf6a');
+      eye(-R*0.35,-R*0.05,R*0.23); eye(R*0.35,-R*0.05,R*0.23);
+      const w = R*0.95, h=R*0.32; ctx.save(); ctx.translate(0,R*0.25); ctx.rotate(rnd(-0.06,0.06));
+      roundRectPath(-w/2,-h/2,w,h,h*0.35); ctx.fillStyle='#111'; ctx.fill();
+      ctx.strokeStyle='#fff'; ctx.lineWidth=Math.max(2,R*0.05);
+      for(let i=-6;i<=6;i++){ const lx = (i/6)*w*0.48; ctx.beginPath(); ctx.moveTo(lx,-h*0.47); ctx.lineTo(lx,h*0.47); ctx.stroke(); }
       ctx.restore();
-      return s*1.0;
+      ctx.globalAlpha=0.6; ctx.fillStyle='#ff9ad5';
+      for(let i=0;i<4;i++){ const px=rnd(-R*1.2,R*1.2), py=rnd(-R*1.2,R*1.2), s=R*0.12; ctx.fillRect(px,py,s*0.6,s*0.6);} ctx.globalAlpha=1;
+      ctx.restore();
+      return R*0.9;
     }
 
-    // 2) Цветок-крыльчатка (яркий) + пчёлки
-    function drawBee(x,y,s,rot){
-      ctx.save(); ctx.translate(x,y); ctx.rotate(rot||0); ctx.scale(s,s);
-      ctx.fillStyle = '#222'; ctx.beginPath(); ctx.ellipse(0,0,16,10,0,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#facc15'; for(let i=-10;i<=10;i+=6){ ctx.fillRect(-8,i,16,3); }
-      ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(-15,0,7,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-17,-2,2.5,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(-17,-2,1.2,0,Math.PI*2); ctx.fill();
-      ctx.globalAlpha = 0.7; ctx.fillStyle = 'rgba(180,230,255,0.85)';
-      ctx.beginPath(); ctx.ellipse(-6,-10,10,6,0,0,Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(2,-12,9,5,0,0,Math.PI*2); ctx.fill();
-      ctx.restore();
-    }
-
+    // 2) Цветок-крыльчатка (яркий) + крупные пчёлки
     function sFlower(x,y){
-      const blades=8+((Math.random()*4)|0), r=70+Math.random()*90;
+      const R = 70 + Math.random()*100; const petals = 10 + (Math.random()*4|0);
       ctx.save(); ctx.translate(x,y); ctx.rotate(Math.random()*Math.PI);
-      const petalCols=['#60a5fa','#34d399','#f472b6','#f59e0b','#a78bfa','#22d3ee','#fb7185','#84cc16'];
-      for(let i=0;i<blades;i++){
-        const a0=(i/blades)*Math.PI*2;
-        ctx.beginPath();
-        ctx.ellipse(Math.cos(a0)*r*0.18, Math.sin(a0)*r*0.18, r*0.9, r*0.35, a0, 0, Math.PI*2);
-        const gx=Math.cos(a0)*r, gy=Math.sin(a0)*r;
-        const g=ctx.createLinearGradient(0,0,gx,gy);
-        addStop(g,0,'#ffffffcc'); addStop(g,0.25,pick(petalCols)); addStop(g,1,pick(petalCols));
-        ctx.globalAlpha=0.95; ctx.fillStyle = g; ctx.fill();
+      for(let i=0;i<petals;i++){
+        const a = (i/petals)*Math.PI*2; ctx.save(); ctx.rotate(a);
+        const pr = R*0.9; const g = ctx.createRadialGradient(pr*0.1,0,pr*0.1, pr*0.2,0,pr);
+        addStop(g,0,pick(['#a7f3d0','#fbcfe8','#fde047','#93c5fd','#86efac','#c4b5fd']));
+        addStop(g,1,pick(['#60a5fa','#34d399','#fb7185','#f59e0b','#8b5cf6']));
+        ctx.fillStyle=g; ctx.beginPath(); ctx.ellipse(R*0.15,0, pr*0.65, pr*0.25, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
       }
-      const cg=ctx.createRadialGradient(0,0,0,0,0,r*0.45);
-      addStop(cg,0,'#fff0'); addStop(cg,0.6,'#ffe082'); addStop(cg,1,'#f59e0b');
-      ctx.globalAlpha=0.9; ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0,0,r*0.45,0,Math.PI*2); ctx.fill();
+      glossyCircle(0,0,R*0.35,'#fff1a6');
+      for(let b=0;b<2;b++) drawBee(rnd(-R,R), rnd(-R,R), R*0.45);
       ctx.restore();
-      const bees = (Math.random()*3)|0;
-      for(let i=0;i<bees;i++){
-        const ang=Math.random()*Math.PI*2, dist=r*0.8+Math.random()*r*0.8;
-        drawBee(x+Math.cos(ang)*dist, y+Math.sin(ang)*dist, 2.2+Math.random()*1.2, ang+Math.PI/2);
-      }
-      return r;
+      return R*1.2;
+    }
+    function drawBee(x,y,S){
+      ctx.save(); ctx.translate(x,y); ctx.rotate(rnd(-0.6,0.6));
+      roundRectPath(-S*0.5,-S*0.25,S, S*0.5, S*0.25); ctx.fillStyle='#ffcf33'; ctx.fill();
+      ctx.strokeStyle='#111'; ctx.lineWidth=Math.max(2,S*0.08);
+      for(let i=-1;i<=1;i++){ ctx.beginPath(); ctx.moveTo(i*S*0.22,-S*0.27); ctx.lineTo(i*S*0.22,S*0.27); ctx.stroke(); }
+      ctx.beginPath(); ctx.arc(-S*0.55,0,S*0.22,0,Math.PI*2); ctx.fillStyle='#111'; ctx.fill();
+      ctx.globalAlpha=0.55; ctx.fillStyle='#e6f6ff';
+      ctx.beginPath(); ctx.ellipse(S*0.1,-S*0.35,S*0.35,S*0.18,-0.4,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(S*0.2,S*0.35,S*0.35,S*0.18,0.4,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
+      ctx.restore();
     }
 
-    // 3) Бумажный стикер
-    function sPaper(x,y){ const w=160+Math.random()*220, h=120+Math.random()*180, angle=(Math.random()-0.5)*0.7;
-      ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
-      const jag=10+((Math.random()*10)|0); const path=[];
-      for(let i=0;i<jag;i++){ const px=-w/2+(w*i)/(jag-1)+(Math.random()-0.5)*8; const py=-h/2+(Math.random()-0.5)*12; path.push([px,py]); }
-      path.push([w/2,h/2]); path.push([-w/2,h/2]);
-      ctx.save(); ctx.shadowColor='rgba(0,0,0,0.22)'; ctx.shadowBlur=12; ctx.shadowOffsetY=6;
-      ctx.beginPath(); ctx.moveTo(path[0][0],path[0][1]); for(let i=1;i<path.length;i++) ctx.lineTo(path[i][0],path[i][1]); ctx.closePath();
-      ctx.fillStyle = gradLinear(-w/2,-h/2,w/2,h/2); ctx.fill(); ctx.restore();
-      ctx.save(); ctx.globalAlpha=0.25; for(let i=0;i<(w*h)/1200;i++){ ctx.fillStyle = Math.random()<0.5?'#fff':'#000'; const nx=(Math.random()-0.5)*w, ny=(Math.random()-0.5)*h; ctx.fillRect(nx,ny,1,1);} ctx.restore();
-      ctx.restore(); return Math.max(w,h)*0.45; }
+    // 3) Бумажные стикеры (классический вид)
+    function sPaper(x, y) {
+      // CLASSIC STICKY (как на твоём втором скрине):
+      // — без рваного верха, ровные края
+      // — яркий градиент
+      // — крупная мягкая тень
+      // — часто вырезанное «окошко»
+      const W = 150 + Math.random() * 240;
+      const H = 110 + Math.random() * 180;
+      const rot = rnd(-0.15, 0.15);
 
-    // 4) Надпись KEEP CALM
-    function sKeepCalm(x,y){ const size = 36 + Math.random()*60; ctx.save(); ctx.translate(x,y); ctx.rotate((Math.random()-0.5)*0.4);
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.font = '900 '+Math.round(size)+'px system-ui,-apple-system,Segoe UI,Roboto,Arial';
-      ctx.save(); ctx.globalAlpha=0.35; ctx.strokeStyle='#000'; ctx.lineWidth=Math.max(2,Math.round(size*0.08)); ctx.strokeText('KEEP CALM',0,0); ctx.restore();
-      const g=ctx.createLinearGradient(-size*2,0,size*2,0); addStop(g,0,'#fff'); addStop(g,1,'#e6f6ff');
-      ctx.fillStyle = g; ctx.globalCompositeOperation='lighter'; ctx.fillText('KEEP CALM',0,0); ctx.restore();
-      return size*3.2; }
+      const pal = pick([
+        ['#ff9a9e', '#fad0c4', '#ff6cab'], // pinks
+        ['#36d1dc', '#5b86e5', '#7cc6ff'], // teal → blue
+        ['#fbd72b', '#f9484a', '#ff8f00'], // yellow → orange
+        ['#43e97b', '#38f9d7', '#14b8a6'], // green → aqua
+        ['#a18cd1', '#fbc2eb', '#8b5cf6']  // lilac → magenta
+      ]);
 
-    // 5) Скелетик
-    function sSkull(x,y){ const s=rnd(70,120); ctx.save(); ctx.translate(x,y); ctx.rotate(rnd(-0.2,0.2));
-      glossyCircle(0,0,s*0.6,'#e5e7eb'); ctx.fillStyle = '#e5e7eb';
-      roundRectPath(-s*0.55, s*0.4, s*1.1, s*0.45, s*0.2); ctx.fill();
-      ctx.fillStyle = '#111'; for(let i=-5;i<=5;i++){ ctx.fillRect(i*s*0.09-1, s*0.4, 2, s*0.45); }
-      eye(-s*0.25,-s*0.05,s*0.18); eye(s*0.25,-s*0.05,s*0.18);
-      ctx.fillStyle = '#111'; ctx.beginPath(); ctx.moveTo(0,s*0.05); ctx.lineTo(-s*0.08,s*0.2); ctx.lineTo(s*0.08,s*0.2); ctx.closePath(); ctx.fill();
-      ctx.restore(); return s*0.95; }
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rot);
 
-    // 6) Ферма — сильнее отличаем животных по размерам/форме
+      // глубокая мягкая тень
+      ctx.shadowColor = 'rgba(0,0,0,0.40)';
+      ctx.shadowBlur = 28;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 12;
+
+      // тело стикера — квадратные углы (минимальный радиус)
+      const g = ctx.createLinearGradient(-W/2, -H/2, W/2, H/2);
+      addStop(g, 0, pal[0]);
+      addStop(g, 0.55, pal[1]);
+      addStop(g, 1, pal[2]);
+      ctx.fillStyle = g;
+      roundRectPath(-W/2, -H/2, W, H, 3);
+      ctx.fill();
+
+      // без обводок/надрывов — чистый блок
+      ctx.shadowColor = 'transparent';
+
+      // «окошко» внутри — встречается чаще
+      if (Math.random() < 0.7) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-out';
+        const w = rnd(W * 0.25, W * 0.5);
+        const h = rnd(H * 0.32, H * 0.58);
+        const ox = rnd(-W * 0.1, W * 0.1);
+        const oy = rnd(-H * 0.08, H * 0.08);
+        roundRectPath(-w/2 + ox, -h/2 + oy, w, h, 10);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // редкая надпись «slow down» на некоторых стикерах
+      if (Math.random() < 0.08) {
+        ctx.save();
+        ctx.rotate(rnd(-0.06, 0.06));
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const f = Math.floor(Math.min(W, H) * 0.22);
+        ctx.font = '700 ' + f + 'px system-ui,-apple-system,Segoe UI,Roboto,Arial';
+        // лёгкая тень для читаемости
+        ctx.fillStyle = 'rgba(0,0,0,0.28)';
+        ctx.fillText('slow down', 2, 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('slow down', 0, 0);
+        ctx.restore();
+      }
+
+      // лёгкая зернистость
+      const dots = 14 + (Math.random() * 10 | 0);
+      ctx.fillStyle = 'rgba(0,0,0,0.08)';
+      for (let i = 0; i < dots; i++) {
+        ctx.beginPath();
+        ctx.arc(rnd(-W*0.48, W*0.48), rnd(-H*0.48, H*0.48), rnd(0.6, 1.2), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+      return Math.max(W, H) * 0.55;
+    }
+
+    // 4) KEEP CALM табличка (строго верхний регистр)
+    function sKeepCalm(x,y){
+      const S = 260 + Math.random()*220; // controls font size/impact
+      ctx.save(); ctx.translate(x,y); ctx.rotate(rnd(-0.25,0.25));
+      const text = 'KEEP CALM'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const fontSize = Math.floor(S*0.22); ctx.font = '900 '+fontSize+'px system-ui,-apple-system,Segoe UI,Roboto,Arial';
+      const extrude = Math.max(2, Math.floor(fontSize*0.08));
+      for (let i = 6; i >= 1; i--) { const alpha = 0.08 + i*0.02; ctx.fillStyle = 'rgba(0,0,0,'+alpha.toFixed(3)+')'; ctx.fillText(text, i*extrude*0.2, i*extrude*0.2); }
+      ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(2, fontSize*0.10); ctx.strokeStyle = 'rgba(0,0,0,0.65)'; ctx.strokeText(text, 0, 0);
+      ctx.fillStyle = '#ffffff'; ctx.fillText(text, 0, 0);
+      ctx.restore(); return S*0.55;
+    }
+
+    // 5) Скелетик (чёткая, простая версия как в рефе)
+    function sSkull(x,y){
+      const R = 85 + Math.random()*20; // базовый размер
+      ctx.save();
+      ctx.translate(x,y);
+      ctx.rotate(rnd(-0.18,0.18));
+      // Голова
+      glossyCircle(0,0,R,'#e6e9ee');
+      // Глаза
+      eye(-R*0.28, -R*0.06, R*0.18);
+      eye( R*0.28, -R*0.06, R*0.18);
+      // Нос — маленький чёрный треугольник
+      ctx.fillStyle = '#111';
+      ctx.beginPath();
+      ctx.moveTo(0, -R*0.02);
+      ctx.lineTo(-R*0.10,  R*0.14);
+      ctx.lineTo( R*0.10,  R*0.14);
+      ctx.closePath();
+      ctx.fill();
+      // Боковые круглые "щёчки"
+      glossyCircle(-R*0.60, R*0.44, R*0.22, '#edf1f5');
+      glossyCircle( R*0.60, R*0.44, R*0.22, '#edf1f5');
+      // Челюсть
+      const mw = R*1.28, mh = R*0.55;
+      const tilt = rnd(-0.05,0.05);
+      ctx.save();
+      ctx.translate(0, R*0.38);
+      ctx.rotate(tilt);
+      roundRectPath(-mw/2, -mh/2, mw, mh, mh*0.45);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      // Полоски-зубы
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = Math.max(1.5, R*0.04);
+      for(let i=-8;i<=8;i++){
+        const lx = (i/8) * mw*0.46;
+        ctx.beginPath();
+        ctx.moveTo(lx, -mh*0.42);
+        ctx.lineTo(lx,  mh*0.42);
+        ctx.stroke();
+      }
+      ctx.restore();
+      ctx.restore();
+      return R*1.6;
+    }
+
+    // 6) Ферма — разные звери (вариативные)
     function animalBody(x,y,w,h,fill,rot){ ctx.save(); ctx.translate(x,y); ctx.rotate(rot||0); ctx.fillStyle = fill; roundRectPath(-w/2,-h/2,w,h,Math.min(w,h)*0.25); ctx.fill(); ctx.restore(); }
     function drawEar(px,py,r,rot,col){ ctx.save(); ctx.translate(px,py); ctx.rotate(rot||0); ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(0,0,r*0.55,r,0,0,Math.PI*2); ctx.fill(); ctx.restore(); }
     function drawLeg(px,py,w,h,col){ ctx.save(); ctx.translate(px,py); ctx.fillStyle=col; roundRectPath(-w/2,0,w,h,Math.min(w,h)*0.25); ctx.fill(); ctx.restore(); }
-
     function sFarm(x,y){
       const type = pick(['alpaca','horse','donkey','mule','bull','sheep','rabbit','goat']);
-      const flip = Math.random()<0.5?-1:1;
-      let scale = 1, rot = 0;
-      ctx.save(); ctx.translate(x,y);
-      if(type==='bull'){ scale=rnd(1.5,1.9); rot=rnd(-0.1,0.1);} // САМЫЙ БОЛЬШОЙ, огромные рога
-      else if(type==='mule'){ scale=rnd(1.25,1.5); rot=rnd(-0.15,0.15);} // крупнее лошади
-      else if(type==='horse'){ scale=rnd(0.9,1.1); rot=rnd(-0.25,0.25);} // средний
-      else if(type==='donkey'){ scale=rnd(0.9,1.15); rot=rnd(-0.2,0.2);} // с длинными ушами
-      else if(type==='sheep'){ scale=rnd(0.8,1.0); rot=rnd(-0.15,0.15);} // средний пушистый
-      else if(type==='goat'){ scale=rnd(0.8,1.1); rot=rnd(-0.15,0.15);} // компактный
-      else if(type==='alpaca'){ scale=rnd(1.0,1.25); rot=rnd(-0.15,0.15);} // высокий
-      else { scale=rnd(0.45,0.65); rot=rnd(-0.4,0.4);} // rabbit — очень маленький
+      const flip = Math.random()<0.5?-1:1; let scale = 1, rot = 0; ctx.save(); ctx.translate(x,y);
+      if(type==='bull'){ scale=rnd(1.5,1.9); rot=rnd(-0.1,0.1);} else if(type==='mule'){ scale=rnd(1.25,1.5); rot=rnd(-0.15,0.15);} else if(type==='horse'){ scale=rnd(0.9,1.1); rot=rnd(-0.25,0.25);} else if(type==='donkey'){ scale=rnd(0.9,1.15); rot=rnd(-0.2,0.2);} else if(type==='sheep'){ scale=rnd(0.8,1.0); rot=rnd(-0.15,0.15);} else if(type==='goat'){ scale=rnd(0.8,1.1); rot=rnd(-0.15,0.15);} else if(type==='alpaca'){ scale=rnd(1.0,1.25); rot=rnd(-0.15,0.15);} else { scale=rnd(0.45,0.65); rot=rnd(-0.4,0.4);} // rabbit
       ctx.rotate(rot); ctx.scale(scale*flip,scale);
-
       if(type==='alpaca'){
-        animalBody(0,10,140,90,'#e9edf1'); drawLeg(-40,50,16,45,'#cfd6de'); drawLeg(40,50,16,45,'#cfd6de');
-        glossyCircle(-35,-10,22,'#f3f7fb'); glossyCircle(35,-10,22,'#f3f7fb');
-        glossyCircle(0,-30,34,'#f1f5f9'); eye(-12,-35,8); eye(12,-35,8);
+        animalBody(0,10,140,90,'#e9edf1',0); drawLeg(-40,50,16,45,'#cfd6de'); drawLeg(40,50,16,45,'#cfd6de');
+        glossyCircle(-35,-10,22,'#f3f7fb'); glossyCircle(35,-10,22,'#f3f7fb'); glossyCircle(0,-30,34,'#f1f5f9'); eye(-12,-35,8); eye(12,-35,8);
         drawEar(-20,-55,18,-0.9,'#e6ebf2'); drawEar(20,-55,18,0.9,'#e6ebf2');
       } else if(type==='horse' || type==='donkey' || type==='mule'){
         const bodyCol = type==='horse' ? pick(['#b17a4b','#8b5a2b','#6d4c41']) : (type==='mule' ? '#7f6a58' : '#8d8d8d');
-        // боковой силуэт (четыре ноги)
-        animalBody(0,10,170,78,bodyCol,0.03);
-        drawLeg(-60,50,14,48,bodyCol); drawLeg(-25,50,14,52,bodyCol); drawLeg(25,50,14,48,bodyCol); drawLeg(60,50,14,45,bodyCol);
-        // шея / голова вбок
+        animalBody(0,10,170,78,bodyCol,0.03); drawLeg(-60,50,14,48,bodyCol); drawLeg(-25,50,14,52,bodyCol); drawLeg(25,50,14,48,bodyCol); drawLeg(60,50,14,45,bodyCol);
         animalBody(80,-8,70,36,bodyCol,-0.35); glossyCircle(115,-20,20,bodyCol); eye(108,-24,6); eye(120,-24,6);
-        // уши/грива
         ctx.fillStyle = '#3b2f2a'; ctx.fillRect(38,-30,18,16);
         drawEar(110,-38, type==='donkey'?16:12, -0.8, bodyCol); drawEar(126,-36, type==='donkey'?16:10, 0.8, bodyCol);
       } else if(type==='bull'){
-        const col = pick(['#7a3b2e','#4b2e2e','#582b22']);
-        animalBody(0,10,170,95,col);
-        drawLeg(-55,55,18,48,col); drawLeg(55,55,18,46,col);
-        // огромные рога
-        glossyCircle(0,-22,32,col);
-        ctx.strokeStyle='#e5e7eb'; ctx.lineWidth=8; ctx.beginPath(); ctx.moveTo(-34,-36); ctx.quadraticCurveTo(-100,-70,-135,-22); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(34,-36); ctx.quadraticCurveTo(100,-70,135,-22); ctx.stroke();
-        eye(-10,-26,7); eye(10,-26,7);
+        const col = pick(['#7a3b2e','#4b2e2e','#582b22']); animalBody(0,10,170,95,col,0); drawLeg(-55,55,18,48,col); drawLeg(55,55,18,46,col);
+        glossyCircle(0,-22,32,col); ctx.strokeStyle='#e5e7eb'; ctx.lineWidth=8; ctx.beginPath(); ctx.moveTo(-34,-36); ctx.quadraticCurveTo(-100,-70,-135,-22); ctx.stroke(); ctx.beginPath(); ctx.moveTo(34,-36); ctx.quadraticCurveTo(100,-70,135,-22); ctx.stroke(); eye(-10,-26,7); eye(10,-26,7);
       } else if(type==='sheep'){
-        const base = pick(['#f5f5f5','#ececec','#ffffff']);
-        ctx.save(); ctx.translate(0,10); ctx.fillStyle=base; for(let i=0;i<36;i++){ ctx.beginPath(); ctx.arc(rnd(-65,65), rnd(-32,32), rnd(12,22), 0, Math.PI*2); ctx.fill(); } ctx.restore();
-        drawLeg(-30,55,12,40,'#bdbdbd'); drawLeg(30,55,12,40,'#bdbdbd');
-        glossyCircle(0,-10,20,'#d1d5db'); eye(-6,-14,5); eye(6,-14,5);
+        const base = pick(['#f5f5f5','#ececec','#ffffff']); ctx.save(); ctx.translate(0,10); ctx.fillStyle=base; for(let i=0;i<36;i++){ ctx.beginPath(); ctx.arc(rnd(-65,65), rnd(-32,32), rnd(12,22), 0, Math.PI*2); ctx.fill(); } ctx.restore(); drawLeg(-30,55,12,40,'#bdbdbd'); drawLeg(30,55,12,40,'#bdbdbd'); glossyCircle(0,-10,20,'#d1d5db'); eye(-6,-14,5); eye(6,-14,5);
       } else if(type==='goat'){
-        animalBody(0,10,120,70,'#d9d9d9'); drawLeg(-35,45,14,42,'#bdbdbd'); drawLeg(35,45,14,42,'#bdbdbd');
-        glossyCircle(40,-20,16,'#e5e5e5'); glossyCircle(-20,-20,18,'#e5e5e5'); eye(-25,-24,5); eye(-14,-24,5);
-        ctx.fillStyle='#b1976b'; ctx.fillRect(-30,-48,8,20); ctx.fillRect(-12,-48,8,20);
-      } else { // rabbit — маленький
-        animalBody(0,15,90,60,'#eeeeee'); drawLeg(-20,45,12,36,'#cccccc'); drawLeg(20,45,12,36,'#cccccc');
-        glossyCircle(-10,-10,14,'#f1f1f1'); eye(-12,-14,4); eye(-4,-14,4);
-        drawEar(-25,-38,22,-0.3,'#f1f1f1'); drawEar(-8,-42,24,0.2,'#f1f1f1');
+        animalBody(0,10,120,70,'#d9d9d9',0); drawLeg(-35,45,14,42,'#bdbdbd'); drawLeg(35,45,14,42,'#bdbdbd'); glossyCircle(40,-20,16,'#e5e5e5'); glossyCircle(-20,-20,18,'#e5e5e5'); eye(-25,-24,5); eye(-14,-24,5); ctx.fillStyle='#b1976b'; ctx.fillRect(-30,-48,8,20); ctx.fillRect(-12,-48,8,20);
+      } else { // rabbit
+        animalBody(0,15,90,60,'#eeeeee',0); drawLeg(-20,45,12,36,'#cccccc'); drawLeg(20,45,12,36,'#cccccc'); glossyCircle(-10,-10,14,'#f1f1f1'); eye(-12,-14,4); eye(-4,-14,4); drawEar(-25,-38,22,-0.3,'#f1f1f1'); drawEar(-8,-42,24,0.2,'#f1f1f1');
       }
       ctx.restore();
-      return 110*scale; // ориентировочный размер для маски
+      return 110*scale;
     }
 
-    // 7) Twin Peaks meme (стилизованный постер)
+    // 7) Twin Peaks meme (постер)
     function sPeaks(x,y){
-      const w = 380 + Math.random()*140, h = w*0.56;
-      ctx.save(); ctx.translate(x,y); ctx.rotate((Math.random()-0.5)*0.03);
-      // красная занавеска
-      const g = ctx.createLinearGradient(-w/2,0,w/2,0); addStop(g,0,'#7a0b1f'); addStop(g,0.5,'#c21d3f'); addStop(g,1,'#7a0b1f');
-      ctx.fillStyle=g; roundRectPath(-w/2,-h/2,w,h,14); ctx.fill();
-
-      // === Стилизация "Симпсоны" для лица (ясно читаемая девушка) ===
-      // плечи и пиджак
-      ctx.save(); ctx.translate(0,h*0.08);
-      ctx.fillStyle='#1f2937'; roundRectPath(-w*0.22,h*0.08,w*0.44,h*0.26,10); ctx.fill();
-      // шея
+      const w = 380 + Math.random()*140, h = w*0.56; ctx.save(); ctx.translate(x,y); ctx.rotate((Math.random()-0.5)*0.03);
+      const g = ctx.createLinearGradient(-w/2,0,w/2,0); addStop(g,0,'#7a0b1f'); addStop(g,0.5,'#c21d3f'); addStop(g,1,'#7a0b1f'); ctx.fillStyle=g; roundRectPath(-w/2,-h/2,w,h,14); ctx.fill();
+      ctx.save(); ctx.translate(0,h*0.08); ctx.fillStyle='#1f2937'; roundRectPath(-w*0.22,h*0.08,w*0.44,h*0.26,10); ctx.fill();
       ctx.fillStyle='#ffd17a'; roundRectPath(-w*0.03,-h*0.02,w*0.06,h*0.10,6); ctx.fill();
-      // голова (жёлтая кожа, как у Симпсонов)
-      ctx.translate(0,-h*0.02);
-      ctx.fillStyle='#ffd17a'; ctx.beginPath(); ctx.ellipse(0,-h*0.01,h*0.15,h*0.18,0,0,Math.PI*2); ctx.fill();
-      // волосы: светлые, объём
+      ctx.translate(0,-h*0.02); ctx.fillStyle='#ffd17a'; ctx.beginPath(); ctx.ellipse(0,-h*0.01,h*0.15,h*0.18,0,0,Math.PI*2); ctx.fill();
       const hg = ctx.createLinearGradient(-w*0.2,0,w*0.2,0); addStop(hg,0,'#f7e7b7'); addStop(hg,1,'#f1d78f');
-      ctx.fillStyle = hg;
-      ctx.beginPath();
+      ctx.fillStyle = hg; ctx.beginPath();
       ctx.moveTo(-w*0.18,-h*0.08); ctx.quadraticCurveTo(-w*0.10,-h*0.22,0,-h*0.20);
       ctx.quadraticCurveTo(w*0.12,-h*0.22,w*0.18,-h*0.08);
-      ctx.quadraticCurveTo(w*0.10,0,0,0); ctx.quadraticCurveTo(-w*0.10,0,-w*0.18,-h*0.08);
+      ctx.quadraticCurveTo(w*0.10,0,0,0);
+      ctx.quadraticCurveTo(-w*0.10,0,-w*0.18,-h*0.08);
       ctx.closePath(); ctx.fill();
-      // глаза
       ctx.fillStyle='#fff'; ctx.beginPath(); ctx.ellipse(-w*0.03,-h*0.03,h*0.03,h*0.035,0,0,Math.PI*2); ctx.fill();
       ctx.beginPath(); ctx.ellipse(w*0.03,-h*0.03,h*0.03,h*0.035,0,0,Math.PI*2); ctx.fill();
       ctx.fillStyle='#111'; ctx.beginPath(); ctx.arc(-w*0.03,-h*0.03,h*0.012,0,Math.PI*2); ctx.fill();
       ctx.beginPath(); ctx.arc(w*0.03,-h*0.03,h*0.012,0,Math.PI*2); ctx.fill();
-      // нос
       ctx.fillStyle='#eab860'; roundRectPath(-w*0.01,-h*0.01,w*0.02,h*0.02,4); ctx.fill();
-      // губы
       ctx.fillStyle='#e11d48'; ctx.beginPath(); ctx.ellipse(0,h*0.02,h*0.035,h*0.018,0,0,Math.PI*2); ctx.fill();
       ctx.restore();
-
-      // подпись
       ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillStyle='#fff';
       ctx.font='900 '+Math.round(h*0.13)+'px system-ui,-apple-system,Segoe UI,Roboto,Arial';
       ctx.fillText("I'll see you again in 25 years",0,h*0.34);
-      ctx.restore();
-      return Math.max(w,h)*0.55;
+      ctx.restore(); return Math.max(w,h)*0.55;
     }
 
-    // ===== mission config (пер-миссионные пороги/маска) =====
+    // 8) Два розовых кружка со звёздочками (рядом + пружинка)
+    function drawPinkPair(x,y,R,rot=0){
+      const gap = 0; // касаются
+      ctx.save(); ctx.translate(x,y); ctx.rotate(rot);
+      const gL = ctx.createRadialGradient(-R,0,R*0.2, -R,0,R);
+      addStop(gL,0,'#ffd5da'); addStop(gL,0.5,'#ffb7c2'); addStop(gL,1,'#ff9fb5');
+      const gR = ctx.createRadialGradient( R,0,R*0.2,  R,0,R);
+      addStop(gR,0,'#ffd5da'); addStop(gR,0.5,'#ffb7c2'); addStop(gR,1,'#ff9fb5');
+      ctx.fillStyle=gL; ctx.beginPath(); ctx.arc(-R-gap*0.5,0,R,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle=gR; ctx.beginPath(); ctx.arc( R+gap*0.5,0,R,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#e7ecef';
+      const star = (cx)=>{ ctx.beginPath(); for(let i=0;i<5;i++){ const a=-Math.PI/2+i*2*Math.PI/5; const x=cx+Math.cos(a)*R*0.45; const y=Math.sin(a)*R*0.45; (i?ctx.lineTo(x,y):ctx.moveTo(x,y)); const a2=a+Math.PI/5; ctx.lineTo(cx+Math.cos(a2)*R*0.2, Math.sin(a2)*R*0.2); } ctx.closePath(); ctx.fill(); };
+      star(-R-gap*0.5); star(R+gap*0.5);
+      ctx.restore();
+    }
+    function sPinkStars(x,y){
+      const R = 90 + Math.random()*110; const rot = (Math.random()-0.5)*0.06;
+      drawPinkPair(x,y,R,rot);
+      wobblers.push({x,y,R, phase:Math.random()*Math.PI*2, amp:R*0.06, start:performance.now(), until:performance.now()+800});
+      return (R*2) * 0.7;
+    }
+
+    // ===== mission config (pinkstars — последним) =====
     const CONFIGS = [
-      {fn:sChubrikWithPixels, key:'chubrik',  maskFactor:0.70, target:0.985},
-      {fn:sFlower,             key:'flowers', maskFactor:0.95, target:0.975}, // быстрее засчитывать
-      {fn:sPaper,              key:'paper',   maskFactor:0.75, target:0.985},
-      {fn:sKeepCalm,           key:'keepcalm',maskFactor:0.55, target:0.995}, // сложнее читерно закрыть текстом
-      {fn:sSkull,              key:'skulls',  maskFactor:0.70, target:0.985},
-      {fn:sFarm,               key:'farm',    maskFactor:0.80, target:0.985},
-      {fn:sPeaks,              key:'peaks',   maskFactor:0.75, target:0.985}
+      {fn:sChubrik,   key:'chubrik',   maskFactor:0.70, target:0.985},
+      {fn:sFlower,    key:'flowers',   maskFactor:0.95, target:0.975},
+      {fn:sPaper,     key:'paper',     maskFactor:0.75, target:0.985},
+      {fn:sKeepCalm,  key:'keepcalm',  maskFactor:0.55, target:0.995},
+      {fn:sSkull,     key:'skulls',    maskFactor:0.70, target:0.985},
+      {fn:sFarm,      key:'farm',      maskFactor:0.80, target:0.985},
+      {fn:sPeaks,     key:'peaks',     maskFactor:0.75, target:0.985},
+      {fn:sPinkStars, key:'pinkstars', maskFactor:0.80, target:0.985}
     ];
 
     function currentCfg(){ return CONFIGS[state.winCount % CONFIGS.length]; }
@@ -314,12 +399,11 @@
       ctx.textAlign='center'; ctx.textBaseline='middle';
       while(size>18){ ctx.font='700 '+size+'px system-ui,-apple-system,Segoe UI,Roboto'; if(ctx.measureText(title).width<=w*0.9) break; size-=2; }
       ctx.save(); ctx.globalAlpha=0.35; ctx.fillStyle = '#000'; ctx.fillText(title,w/2+2,h/2+2); ctx.restore();
-      const tg=ctx.createLinearGradient(w*0.25,h*0.5,w*0.75,h*0.5); addStop(tg,0,'#fff'); addStop(tg,1,'#e6f6ff');
-      ctx.fillStyle = tg; ctx.fillText(title,w/2,h/2);
+      const tg=ctx.createLinearGradient(w*0.25,h*0.5,w*0.75,h*0.5); addStop(tg,0,'#fff'); addStop(tg,1,'#e6f6ff'); ctx.fillStyle = tg; ctx.fillText(title,w/2,h/2);
     }
 
     // ===== painting =====
-    const BRUSH_R=26; // базовый радиус для маски
+    const BRUSH_R=26;
     function stamp(x,y){
       const cfg = currentCfg();
       let R = cfg.fn(x,y) || BRUSH_R;
@@ -329,86 +413,54 @@
       state.lastPaint = performance.now();
     }
 
-    // семплирование площади
     function ratio(){
       let img; try{ img=mctx.getImageData(0,0,mask.width,mask.height);}catch(e){return 0;}
       const d=img.data; let c=0,t=0; for(let i=0;i<d.length;i+=8){ c+= d[i+3]>0 ? 1:0; t+=1; } return t?c/t:0;
     }
 
-    // ===== celebration =====
     function fireColor(){ return pick(theme().fire); }
     function celebrate(){
       state.phase='celebrate';
       const W=canvas.width, H=canvas.height, cssW=W/DPR(), cssH=H/DPR();
-      const particles=[];
-      function burst(bx,by){ const n=60+((Math.random()*40)|0); for(let i=0;i<n;i++){ const a=(i/n)*Math.PI*2 + Math.random()*0.3; const speed=1+Math.random()*3.2; particles.push({x:bx,y:by,vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,life:0,max:600+Math.random()*500,size:1+Math.random()*2.5,color: fireColor()}); } }
+      const particles=[]; function burst(bx,by){ const n=60+((Math.random()*40)|0); for(let i=0;i<n;i++){ const a=(i/n)*Math.PI*2 + Math.random()*0.3; const speed=1+Math.random()*3.2; particles.push({x:bx,y:by,vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,life:0,max:600+Math.random()*500,size:1+Math.random()*2.5,color: fireColor()}); } }
       for(let i=0;i<8;i++) burst(Math.random()*cssW, Math.random()*cssH*0.6 + cssH*0.2);
       const seeds=[]; for(let iy=0;iy<12;iy++){ for(let ix=0;ix<12;ix++){ const x=((ix+0.5)/12)*cssW + (Math.random()-0.5)*18, y=((iy+0.5)/12)*cssH + (Math.random()-0.5)*18, baseSpan=60+Math.random()*140; seeds.push({x:x,y:y,phase:Math.random()*Math.PI*2, span:baseSpan*1.4}); } }
       const smokes=[], sparks=[]; const t0=performance.now();
-
       function tick(){
         const now=performance.now(), t=now-t0, k=Math.min(1,t/2200);
         ctx.save(); ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=0.08; ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H); ctx.restore();
         ctx.save(); ctx.globalCompositeOperation='lighter';
-        particles.forEach(function(p){ p.life+=16; p.x+=p.vx; p.y+=p.vy; p.vy+=0.02; const fade=Math.max(0,1-p.life/p.max); if(!fade)return; const r=p.size*(1+(1-fade)*2); const g=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,r); addStop(g,0,p.color); addStop(g,1,'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.globalAlpha=0.9*fade; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); });
-        ctx.restore();
-
-        if (smokes.length<360 || sparks.length<600){
-          seeds.forEach(function(s){
-            if(Math.random()<0.8 && smokes.length<360){ smokes.push({x:s.x+(Math.random()-0.5)*18, y:s.y+(Math.random()-0.5)*18, r:8+Math.random()*14, vx:(Math.random()-0.5)*0.5, vy:-0.35-Math.random()*0.7, life:0, max:900+Math.random()*900}); }
-            if(Math.random()<0.9 && sparks.length<600){ const a=Math.random()*Math.PI*2, sp=1.5+Math.random()*3.5; sparks.push({x:s.x,y:s.y,vx:Math.cos(a)*sp*0.8, vy:Math.sin(a)*sp*0.2-(0.8+Math.random()*1.6), life:0, max:500+Math.random()*600, size:1+Math.random()*1.8}); }
-          });
-        }
-        ctx.save(); ctx.globalCompositeOperation='source-over';
-        smokes.forEach(function(s){ s.life+=16; s.x+=s.vx; s.y+=s.vy; s.vx*=0.99; s.vy-=0.0006; s.r*=1.014; const fade=Math.max(0,1-s.life/s.max); if(!fade)return; const g=ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,s.r); addStop(g,0,'rgba(255,255,255,'+(0.30*fade).toFixed(3)+')'); addStop(g,0.55,'rgba(170,180,200,'+(0.22*fade).toFixed(3)+')'); addStop(g,1,'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill(); });
-        ctx.restore();
-        ctx.save(); ctx.globalCompositeOperation='lighter';
-        sparks.forEach(function(sp){ sp.life+=16; sp.x+=sp.vx; sp.y+=sp.vy; sp.vx*=0.995; sp.vy+=0.01; const fade=Math.max(0,1-sp.life/sp.max); if(!fade)return; const r=sp.size*(1+(1-fade)*1.5); const g=ctx.createRadialGradient(sp.x,sp.y,0,sp.x,sp.y,r); addStop(g,0,'rgba(255,230,150,'+(0.9*fade).toFixed(3)+')'); addStop(g,0.6,'rgba(255,120,20,'+(0.6*fade).toFixed(3)+')'); addStop(g,1,'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sp.x,sp.y,r,0,Math.PI*2); ctx.fill(); });
-        ctx.restore();
-
-        seeds.forEach(function(s,i){
-          const phase=s.phase + k*7 + i*0.19; const r=(k*(s.span + 220))*(0.95 + 0.35*Math.sin(phase));
-          const flame=ctx.createRadialGradient(s.x,s.y, Math.max(0,r*0.35), s.x,s.y,r);
-          addStop(flame,0,'rgba(255,255,255,'+(0.65*(1-k)).toFixed(3)+')');
-          addStop(flame,0.28,'rgba(255,220,40,'+(0.70*(1-k)).toFixed(3)+')');
-          addStop(flame,0.6,'rgba(255,120,10,'+(0.55*(1-k)).toFixed(3)+')');
-          addStop(flame,1,'rgba(0,0,0,0)');
-          ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.9*(1-k);
-          ctx.beginPath(); ctx.arc(s.x,s.y,r,0,Math.PI*2); ctx.fillStyle = flame; ctx.fill(); ctx.restore();
-        });
-
-        if (t < 2200) requestAnimationFrame(tick);
-        else { state.winCount++; paintBackground(); mctx.clearRect(0,0,mask.width,mask.height); state.phase='idle'; }
+        particles.forEach(function(p){ p.life+=16; p.x+=p.vx; p.y+=p.vy; p.vy+=0.02; const fade=Math.max(0,1-p.life/p.max); if(!fade)return; const r=p.size*(1+(1-fade)*2); const g=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,r); addStop(g,0,p.color); addStop(g,1,'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.globalAlpha=0.9*fade; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); }); ctx.restore();
+        if (smokes.length<360 || sparks.length<600){ seeds.forEach(function(s){ if(Math.random()<0.8 && smokes.length<360){ smokes.push({x:s.x+(Math.random()-0.5)*18, y:s.y+(Math.random()-0.5)*18, r:8+Math.random()*14, vx:(Math.random()-0.5)*0.5, vy:-0.35-Math.random()*0.7, life:0, max:900+Math.random()*900}); } if(Math.random()<0.9 && sparks.length<600){ const a=Math.random()*Math.PI*2, sp=1.5+Math.random()*3.5; sparks.push({x:s.x,y:s.y,vx:Math.cos(a)*sp*0.8, vy:Math.sin(a)*sp*0.2-(0.8+Math.random()*1.6), life:0, max:500+Math.random()*600, size:1+Math.random()*1.8}); } }); }
+        ctx.save(); ctx.globalCompositeOperation='source-over'; smokes.forEach(function(s){ s.life+=16; s.x+=s.vx; s.y+=s.vy; s.vx*=0.99; s.vy-=0.0006; s.r*=1.014; const fade=Math.max(0,1-s.life/s.max); if(!fade)return; const g=ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,s.r); addStop(g,0,'rgba(255,255,255,'+(0.30*fade).toFixed(3)+')'); addStop(g,0.55,'rgba(170,180,200,'+(0.22*fade).toFixed(3)+')'); addStop(g,1,'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill(); }); ctx.restore();
+        ctx.save(); ctx.globalCompositeOperation='lighter'; sparks.forEach(function(sp){ sp.life+=16; sp.x+=sp.vx; sp.y+=sp.vy; sp.vx*=0.995; sp.vy+=0.01; const fade=Math.max(0,1-sp.life/sp.max); if(!fade)return; const r=sp.size*(1+(1-fade)*1.5); const g=ctx.createRadialGradient(sp.x,sp.y,0,sp.x,sp.y,r); addStop(g,0,'rgba(255,230,150,'+(0.9*fade).toFixed(3)+')'); addStop(g,0.6,'rgba(255,120,20,'+(0.6*fade).toFixed(3)+')'); addStop(g,1,'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, Math.PI*2); ctx.fill(); }); ctx.restore();
+        seeds.forEach(function(s,i){ const k2=Math.min(1,(performance.now()-t0)/2200); const phase=s.phase + k2*7 + i*0.19; const r=(k2*(s.span + 220))*(0.95 + 0.35*Math.sin(phase)); const flame=ctx.createRadialGradient(s.x,s.y, Math.max(0,r*0.35), s.x,s.y,r); addStop(flame,0,'rgba(255,255,255,'+(0.65*(1-k2)).toFixed(3)+')'); addStop(flame,0.28,'rgba(255,220,40,'+(0.70*(1-k2)).toFixed(3)+')'); addStop(flame,0.6,'rgba(255,120,10,'+(0.55*(1-k2)).toFixed(3)+')'); addStop(flame,1,'rgba(0,0,0,0)'); ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.9*(1-k2); ctx.beginPath(); ctx.arc(s.x,s.y,r,0,Math.PI*2); ctx.fillStyle = flame; ctx.fill(); ctx.restore(); });
+        if (t < 2200) requestAnimationFrame(tick); else { state.winCount++; paintBackground(); mctx.clearRect(0,0,mask.width,mask.height); state.phase='idle'; }
       }
       requestAnimationFrame(tick);
     }
 
-    // events
     function posFromEvent(e){ const rect = canvas.getBoundingClientRect(); return { x: e.clientX - rect.left, y: e.clientY - rect.top }; }
     canvas.addEventListener('pointerdown', function(e){ if(state.phase!=='idle') return; canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId); state.drawing=true; state.last=posFromEvent(e); stamp(state.last.x, state.last.y); }, {passive:false});
+    canvas.addEventListener('pointermove', function(e){ if(!state.drawing || state.phase!=='idle') return; const p = posFromEvent(e); const dx=p.x-state.last.x, dy=p.y-state.last.y; const dist=Math.hypot(dx,dy), step=26*0.6; if(dist>=step){ const steps=Math.floor(dist/step); for(let i=1;i<=steps;i++){ const x=state.last.x+dx*i/steps, y=state.last.y+dy*i/steps; stamp(x,y);} state.last=p; } const now = performance.now(); const filled = ratio(); const target = currentCfg().target; if (now - state.lastCheck > 150){ state.lastCheck = now; if (filled >= target || (filled > target-0.02 && (now - state.lastPaint) > 1200)) { celebrate(); } } }, {passive:false});
+    const finish=()=>{ state.drawing=false; }; canvas.addEventListener('pointerup',finish); canvas.addEventListener('pointercancel',finish); canvas.addEventListener('pointerleave',finish);
 
-    canvas.addEventListener('pointermove', function(e){
-      if(!state.drawing || state.phase!=='idle') return;
-      const p = posFromEvent(e); const dx=p.x-state.last.x, dy=p.y-state.last.y; const dist=Math.hypot(dx,dy), step=26*0.6;
-      if(dist>=step){ const steps=Math.floor(dist/step); for(let i=1;i<=steps;i++){ const x=state.last.x+dx*i/steps, y=state.last.y+dy*i/steps; stamp(x,y);} state.last=p; }
-      const now = performance.now();
-      const filled = ratio();
-      const target = currentCfg().target; // пер-миссионный порог
-      if (now - state.lastCheck > 150){
-        state.lastCheck = now;
-        if (filled >= target || (filled > target-0.02 && (now - state.lastPaint) > 1200)) {
-          celebrate();
-        }
-      }
-    }, {passive:false});
+    // ===== lightweight self-tests (console) =====
+    function selfTest(){
+      try {
+        console.assert(typeof sChubrik==='function','sChubrik exists');
+        console.assert(typeof sFlower==='function','sFlower exists');
+        console.assert(typeof sPaper==='function','sPaper exists');
+        console.assert(typeof sKeepCalm==='function','sKeepCalm exists');
+        console.assert(typeof sSkull==='function','sSkull exists');
+        console.assert(typeof sFarm==='function','sFarm exists');
+        console.assert(typeof sPeaks==='function','sPeaks exists');
+        console.assert(typeof sPinkStars==='function','sPinkStars exists');
+        console.assert(Array.isArray(CONFIGS) && CONFIGS.length===8, 'CONFIGS length = 8');
+      } catch(e){ console.warn('selfTest warning:', e); }
+    }
 
-    function finish(){ state.drawing=false; }
-    canvas.addEventListener('pointerup',finish); canvas.addEventListener('pointercancel',finish); canvas.addEventListener('pointerleave',finish);
-
-    // init
-    window.addEventListener('resize', dprResize);
-    window.addEventListener('orientationchange', dprResize);
-    dprResize();
+    window.addEventListener('resize', dprResize); window.addEventListener('orientationchange', dprResize); dprResize(); selfTest();
   })();
   </script>
 </body>
